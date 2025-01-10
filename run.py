@@ -115,6 +115,7 @@ def make_env(env_name="MyFrankaEnv-v0", device="cpu", from_pixels: bool = False)
     # TODO: add/modify the transforms
     env.append_transform(RewardSum())
     env.append_transform(StepCounter())
+    env.auto_register_info_dict()
     return env
 
 
@@ -211,6 +212,7 @@ def dump_video(module):
 
 def eval_model(actor, test_env, num_episodes=3):
     test_rewards = []
+    test_success = []
     assert num_episodes > 0, "Requires at least one episode"
     for _ in range(num_episodes):
         td_test = test_env.rollout(
@@ -221,10 +223,12 @@ def eval_model(actor, test_env, num_episodes=3):
             max_steps=10_000_000,
         )
         reward = td_test["next", "episode_reward"][td_test["next", "done"]]
+        success = td_test["next", "success"].unsqueeze(-1)[td_test["next"]["done"]].float()
         test_rewards.append(reward.cpu())
         test_env.apply(dump_video)
+        test_success.append(success.cpu())
     del td_test
-    return torch.cat(test_rewards, 0).mean()
+    return torch.cat(test_rewards, 0).mean(), torch.cat(test_success, 0).mean()
 
 
 @hydra.main(config_path="", config_name="config_torchrl_ppo")
@@ -345,11 +349,13 @@ def main(cfg: "DictConfig"):  # noqa: F821
         episode_rewards = data["next", "episode_reward"][data["next", "done"]]
         if len(episode_rewards) > 0:
             episode_length = data["next", "step_count"][data["next", "done"]]
+            success_rate = data["next", "success"].unsqueeze(-1)[data["next"]["done"]].float()
             log_info.update(
                 {
                     "train/reward": episode_rewards.mean().item(),
                     "train/episode_length": episode_length.sum().item()
                     / len(episode_length),
+                    "train/success_rate": success_rate.mean().item(),
                 }
             )
 
@@ -424,7 +430,7 @@ def main(cfg: "DictConfig"):  # noqa: F821
             ) // cfg_logger_test_interval:
                 actor.eval()
                 eval_start = time.time()
-                test_rewards = eval_model(
+                test_rewards, test_success = eval_model(
                     actor, test_env, num_episodes=cfg_logger_num_test_episodes
                 )
                 eval_time = time.time() - eval_start
@@ -432,6 +438,7 @@ def main(cfg: "DictConfig"):  # noqa: F821
                     {
                         "eval/reward": test_rewards.mean(),
                         "eval/time": eval_time,
+                        "eval/success_rate": test_success.mean()
                     }
                 )
                 actor.train()

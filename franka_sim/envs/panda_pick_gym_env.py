@@ -188,7 +188,8 @@ class PandaPickCubeGymEnv(MujocoGymEnv):
         self._z_success = self._z_init + 0.2
 
         obs = self._compute_observation()
-        return obs, {}
+        info = self._compute_info()
+        return obs, info
 
     def step(
         self, action: np.ndarray
@@ -236,8 +237,10 @@ class PandaPickCubeGymEnv(MujocoGymEnv):
         obs = self._compute_observation()
         rew = self._compute_reward()
         terminated = self.time_limit_exceeded()
+        info = self._compute_info()
+        done = False
 
-        return obs, rew, terminated, False, {}
+        return obs, rew, terminated, done, info
 
     def render(self, cameras=1):
         rendered_frames = []
@@ -304,6 +307,14 @@ class PandaPickCubeGymEnv(MujocoGymEnv):
         r_lift = np.clip(r_lift, 0.0, 1.0)
         rew = 0.3 * r_close + 0.7 * r_lift
         return rew
+
+    def _compute_info(self) -> dict[str, Any]:
+        block_pos = self._data.sensor("block_pos").data.astype(np.float32)
+        place_pos = self._data.sensor("place_pos").data.astype(np.float32)
+        place_radius = self._model.site_size[self.place_sid][0]
+
+        success = np.linalg.norm(block_pos - place_pos) < place_radius
+        return {"success": success}
 
 
 if __name__ == "__main__":
